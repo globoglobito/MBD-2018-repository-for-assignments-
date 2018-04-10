@@ -24,7 +24,7 @@ training_data = read.csv("training_factorize_prepared.csv")
 test_data = read.csv("test_factorize_prepared_2_prepared.csv")
 ```
 
-####### FOr this assignment i did the data cleaning using Dataiku, a readme file with the specifics is available.
+####### For this assignment i did the data cleaning using Dataiku, a readme file with the specifics is available.
 
 We factorize our data once more
 ```{r}
@@ -151,7 +151,6 @@ Submitting
 ```{r}
 #Here we normalize our data and create the submission.
 
-#test_data2 <- test_data.B[importantvars]
 log_prediction <- predict(lasso,  s=lasso$lambda.min, newx = data.matrix(test_data.B))
 actual_pred <- exp(log_prediction)-1
 hist(actual_pred)
@@ -166,7 +165,7 @@ submit$SalePrice[submit$SalePrice == 0] <- replace_value_for_na
 
 write.csv(submit,file="submission.csv",row.names=F)
 
-# In the end this run with the Boruta algorithm improved my results to .129
+
 
 
 
