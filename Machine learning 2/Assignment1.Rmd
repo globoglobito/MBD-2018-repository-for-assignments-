@@ -1,0 +1,174 @@
+---
+title: "Assignment 1"
+output: html_document
+---
+
+Libraries
+```{r}
+library(ggplot2)
+library(plyr)
+library(dplyr)
+library(moments)
+library(glmnet)
+library(caret)
+library(FSelector)
+library(GGally)
+library(Boruta)
+
+```
+
+
+Load our data
+```{r}
+training_data = read.csv("training_factorize_prepared.csv")
+test_data = read.csv("test_factorize_prepared_2_prepared.csv")
+```
+
+####### FOr this assignment i did the data cleaning using Dataiku, a readme file with the specifics is available.
+
+We factorize our data once more
+```{r}
+training_data$MSSubClass <- as.factor(training_data$MSSubClass)
+training_data$MoSold <- as.factor(training_data$MoSold)
+
+test_data$MSSubClass <- as.factor(test_data$MSSubClass)
+test_data$MoSold <- as.factor(test_data$MoSold)
+```
+
+We check for multicoliniarity
+```{r}
+review <- subset(training_data, select = -c( SalePrice))
+ggcorr(review)
+
+my_num_data <- review[, sapply(review, is.numeric)]
+
+review.cor <- cor(my_num_data)
+
+high.cor <- findCorrelation(review.cor, cutoff=.80)
+removeMe <- names(review[high.cor])[2:3]
+
+nuked <-  colnames(training_data) %in% removeMe
+nuked1 <- colnames(test_data) %in% removeMe
+
+training_data <- training_data[!nuked]
+
+test_data <- test_data[!nuked1]
+
+
+```
+
+
+
+This is called the Boruta algorithm and the package docynebtatuib for R can be found here https://cran.r-project.org/web/packages/Boruta/Boruta.pdf. Additionally, my thanks to user OhMets from Kaggle for the example on how to use it. His work can be found https://www.kaggle.com/ohmets/feature-selection-for-regression. Additional thanks to http://www.listendata.com/2017/05/feature-selection-boruta-package.html for the simple explanation between Boruta and Random forrest
+```{r}
+
+set.seed(5) 
+boruta.resultss <- Boruta(subset(training_data, select = -c(SalePrice)),
+                      training_data$SalePrice,
+                      maxRuns=101, 
+                      doTrace=0)
+
+boruta.train <- TentativeRoughFix(boruta.resultss) ## This is a backup test if the Boruta algorimth does few reruns. I'd recommend leaving it in spite of having 101 runs. Essentially if few runs are undertaken, the algorithm is incapable of correctly classifying whether the variable is worth keeping or discarding and leaves it as tentative. This function runs a simplified version of the Boruta algorithm on this variables (if any) to see their worth.
+
+### LEts us see our results
+
+
+plot(boruta.train, xlab = "", xaxt = "n")
+lz<-lapply(1:ncol(boruta.train$ImpHistory),function(i)
+boruta.train$ImpHistory[is.finite(boruta.train$ImpHistory[,i]),i])
+names(lz) <- colnames(boruta.train$ImpHistory)
+Labels <- sort(sapply(lz,median))
+axis(side = 1,las=2,labels = names(Labels), at = 1:ncol(boruta.train$ImpHistory), cex.axis = 0.7)
+
+#### Essentially the plot merely displays the ranking of the variables. with the red being the unimportant variables in our dataset, the green being the relevant ones with 'General living Area' as most important(who would have thought). The shadow variables in blue are the added copies of the variables to remove correlation of the target variables. 
+
+
+keepers <- getSelectedAttributes(boruta.train, withTentative = F)
+
+training_data.B <- colnames(training_data) %in% keepers
+test_data.B <- colnames(test_data) %in% keepers
+
+training_data.B <- training_data[training_data.B]
+training_data.B <- training_data.B %>%
+  mutate(SalePrice = training_data$SalePrice) ### we add Sale price again
+test_data.B <- test_data[test_data.B]
+
+```
+
+Now time to redo, and fix for the skewness,
+
+First the target variable
+```{r}
+training_data.B$SalePrice <- log1p(training_data.B$SalePrice)
+```
+
+
+For Training
+```{r}
+
+column_types <- sapply(names(training_data.B),function(x){class(training_data.B[[x]])}) 
+numeric_columns <-names(column_types[column_types != "factor"]) 
+skew <- sapply(numeric_columns,function(x){skewness(training_data.B[[x]],na.rm = T)}) 
+skew <- skew[skew > 0.75]
+for(x in names(skew)) {
+  training_data.B[[x]] <- log(training_data.B[[x]] + 1)
+}
+
+```
+
+
+For Testing
+```{r}
+
+column_types <- sapply(names(test_data.B),function(x){class(test_data.B[[x]])})
+numeric_columns <-names(column_types[column_types != "factor"])
+skew <- sapply(numeric_columns,function(x){skewness(test_data.B[[x]],na.rm = T)})
+skew <- skew[skew > 0.75]
+for(x in names(skew)) {
+  test_data.B[[x]] <- log(test_data.B[[x]] + 1)
+}
+
+```
+
+
+
+
+Using Lasso
+```{r}
+
+
+lasso<- cv.glmnet(x = data.matrix(training_data.B[,-ncol(training_data.B)]), y=training_data.B$SalePrice, alpha = 1, nfolds = 5)
+plot(lasso)
+
+lasso$lambda.min
+
+sqrt(lasso$cvm[lasso$lambda == lasso$lambda.min])
+
+```
+
+
+Submitting
+```{r}
+#Here we normalize our data and create the submission.
+
+#test_data2 <- test_data.B[importantvars]
+log_prediction <- predict(lasso,  s=lasso$lambda.min, newx = data.matrix(test_data.B))
+actual_pred <- exp(log_prediction)-1
+hist(actual_pred)
+
+
+submit <- data.frame(Id=test_data$Id,SalePrice=actual_pred)
+colnames(submit) <-c("Id", "SalePrice")
+
+submit$SalePrice[is.na(submit$SalePrice)] <- 0
+replace_value_for_na <- sum(na.omit(submit$SalePrice))/(nrow(submit) - sum(submit$SalePrice == 0))
+submit$SalePrice[submit$SalePrice == 0] <- replace_value_for_na
+
+write.csv(submit,file="submission.csv",row.names=F)
+
+# In the end this run with the Boruta algorithm improved my results to .129
+
+
+
+```
+
