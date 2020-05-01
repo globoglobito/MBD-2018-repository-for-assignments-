@@ -1,2 +1,2 @@
-Here are 2 files corresponding to the 2 assignments for this course.
+Machine learning 2 Assignment (2018).
  
